@@ -212,6 +212,7 @@ if is_command apt-get ; then
         iproute_pkg="iproute"
     fi
     # Check for and determine version number (major and minor) of current php install
+    phpInsNewer=false
     if is_command php ; then
         printf "  %b Existing PHP installation detected : PHP version %s\\n" "${INFO}" "$(php <<< "<?php echo PHP_VERSION ?>")"
         printf -v phpInsMajor "%d" "$(php <<< "<?php echo PHP_MAJOR_VERSION ?>")"
@@ -220,19 +221,27 @@ if is_command apt-get ; then
         if [ "${phpInsMajor}" -ge 7 ]; then
             phpInsNewer=true
         fi
+    else
+        echo "no php"
+        phpInsNewer=false
     fi
     # Check if installed php is v 7.0, or newer to determine packages to install
     if [[ "$phpInsNewer" != true ]]; then
         # Prefer the php metapackage if it's there
         if "${PKG_MANAGER}" install --dry-run php > /dev/null 2>&1; then
             phpVer="php"
+            echo "php meta available"
         # fall back on the php5 packages
         else
             phpVer="php5"
+            installtry=$("${PKG_MANAGER}" install --dry-run php)
+            echo "$installtry"
+            echo "php meta not available"
         fi
     else
         # Newer php is installed, its common, cgi & sqlite counterparts are deps
         phpVer="php$phpInsMajor.$phpInsMinor"
+        echo "$phpVer"
     fi
     # We also need the correct version for `php-sqlite` (which differs across distros)
     if "${PKG_MANAGER}" install --dry-run "${phpVer}-sqlite3" > /dev/null 2>&1; then

@@ -710,14 +710,18 @@ def test_install_dependent_packages_web_no_errors(Pihole):
     setup_var_file += "EOF\n"
     Pihole.run(setup_var_file)
     install = Pihole.run('''
+    which php
     runUnattended=true
     useUpdateVars=true
     INSTALL_WEB_SERVER=true
     source /opt/pihole/basic-install.sh
+    echo $(is_command php)
     runUnattended=true
     useUpdateVars=true
     INSTALL_WEB_SERVER=true
     distro_check
+    echo ${phpInsMajor}
+    echo ${phpVer}
     update_package_cache || exit 1
     dep_install_list=("${PIHOLE_DEPS[@]}")
     if [[ "${INSTALL_WEB_SERVER}" == true ]]; then
