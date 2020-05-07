@@ -606,8 +606,9 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
         fi
         mkdir -p "{run}"
         chown {usergroup} "{run}"
-        mkdir -p "{compress}"
+        mkdir -p "{cache}"
         chown {usergroup} "{cache}"
+        mkdir -p "{compress}"
         chown {usergroup} "{compress}"
         mkdir -p "{uploads}"
         chown {usergroup} "{uploads}"
