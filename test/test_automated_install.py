@@ -583,7 +583,7 @@ def test_installPihole_fresh_install_readableFiles(Pihole):
             actual_rc = Pihole.run(check_pihole).rc
 
 
-@pytest.mark.parametrize("test_webpage", [False])
+@pytest.mark.parametrize("test_webpage", [True])
 def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
     '''
     confirms all web page assets from Core repo are readable
@@ -607,6 +607,7 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
         mkdir -p "{run}"
         chown {usergroup} "{run}"
         mkdir -p "{cache}"
+        chown {usergroup} "/var/cache"
         chown {usergroup} "{cache}"
         mkdir -p "{compress}"
         chown {usergroup} "{compress}"
@@ -801,6 +802,36 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
                 'head -n 1 | ' +
                 'grep "HTTP/1.[01] [23].." > /dev/null')
             pagecontent = 'curl --verbose -L "{}"'
+            actual_rc = Pihole.run('cat systemctl')
+            print (actual_rc.stdout)
+            actual_rc = Pihole.run('systemctl start lighttpd')
+            print (actual_rc.stdout)
+            actual_rc = Pihole.run('''
+            echo '########################################webpage#####################################'
+            set -x
+            ps aux
+            ls -la /var/
+            ls -la /var/cache/
+            ls -la /var/cache/lighttpd/
+            ls -la /var/cache/lighttpd/compress/
+            # /usr/sbin/lighttpd -tt -f '/etc/lighttpd/lighttpd.conf' || echo 'checking config failed'
+            # /usr/sbin/lighttpd -f '/etc/lighttpd/lighttpd.conf' || echo 'starting failed'
+            # cat /usr/local/bin/systemctl
+            # ls -la /etc/rc.d/init.d || echo 'not a directory'
+            # ls -la /etc/lighttpd || echo 'not a directory'
+            systemctl start lighttpd || echo 'not systemctl start lighthttpd'
+            echo $?
+            # /etc/init.d/lighttpd start || echo 'not started'
+            # /etc/init.d/lighttpd status || echo 'offline'
+            curl --verbose -s --head '{}'
+            echo $?
+            curl --verbose -L '{}'
+            echo $?
+            curl -s --head '{}' | head -n 1 | grep 'HTTP/1.[01] [23]..' > /dev/null
+            echo $?
+            ps aux
+            '''.format(page, page, page))
+            print (actual_rc.stdout)
             for page in piholeWebpage:
                 # check HTTP status of blockpage
                 actual_rc = Pihole.run(status.format(page))
