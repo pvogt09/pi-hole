@@ -7,6 +7,7 @@ from .conftest import (
     info_box,
     cross_box,
     mock_command,
+    mock_command_run,
     mock_command_2,
     run_script
 )
@@ -595,7 +596,7 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
     # Whiptail dialog returns Cancel for user prompt
     mock_command('whiptail', {'*': ('', '0')}, Pihole)
     # mock systemctl to start lighttpd and FTL
-    ligthttpdcommand = dedent(r'''\"
+    ligthttpdcommand = dedent(r'''\"\"
         echo 'starting lighttpd with {}'
         if [ command -v "apt-get" >/dev/null 2>&1 ]; then
             LIGHTTPD_USER="www-data"
@@ -625,7 +626,7 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
         find "{uploads}" -type f -exec chmod 0666 {chmodarg} \;;
         /usr/sbin/lighttpd -tt -f '{config}'
         /usr/sbin/lighttpd -f '{config}'
-        echo \"'''.format(
+        echo \"\"'''.format(
             '{}',
             usergroup='${{LIGHTTPD_USER}}:${{LIGHTTPD_GROUP}}',
             chmodarg='{{}}',
@@ -639,7 +640,7 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
     FTLcommand = dedent('''\"
         /etc/init.d/pihole-FTL restart
         echo \"''')
-    mock_command_2(
+    mock_command_run(
         'systemctl',
         {
             'enable lighttpd': (
@@ -806,33 +807,33 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
             print (actual_rc.stdout)
             actual_rc = Pihole.run('systemctl start lighttpd')
             print (actual_rc.stdout)
-            actual_rc = Pihole.run('''
-            echo '########################################webpage#####################################'
-            set -x
-            ps aux
-            ls -la /var/
-            ls -la /var/cache/
-            ls -la /var/cache/lighttpd/
-            ls -la /var/cache/lighttpd/compress/
-            # /usr/sbin/lighttpd -tt -f '/etc/lighttpd/lighttpd.conf' || echo 'checking config failed'
-            # /usr/sbin/lighttpd -f '/etc/lighttpd/lighttpd.conf' || echo 'starting failed'
-            # cat /usr/local/bin/systemctl
-            # ls -la /etc/rc.d/init.d || echo 'not a directory'
-            # ls -la /etc/lighttpd || echo 'not a directory'
-            systemctl start lighttpd || echo 'not systemctl start lighthttpd'
-            echo $?
-            # /etc/init.d/lighttpd start || echo 'not started'
-            # /etc/init.d/lighttpd status || echo 'offline'
-            curl --verbose -s --head '{}'
-            echo $?
-            curl --verbose -L '{}'
-            echo $?
-            curl -s --head '{}' | head -n 1 | grep 'HTTP/1.[01] [23]..' > /dev/null
-            echo $?
-            ps aux
-            '''.format(page, page, page))
-            print (actual_rc.stdout)
             for page in piholeWebpage:
+                actual_rc = Pihole.run('''
+                echo '########################################webpage#####################################'
+                set -x
+                ps aux
+                ls -la /var/
+                ls -la /var/cache/
+                ls -la /var/cache/lighttpd/
+                ls -la /var/cache/lighttpd/compress/
+                # /usr/sbin/lighttpd -tt -f '/etc/lighttpd/lighttpd.conf' || echo 'checking config failed'
+                # /usr/sbin/lighttpd -f '/etc/lighttpd/lighttpd.conf' || echo 'starting failed'
+                # cat /usr/local/bin/systemctl
+                # ls -la /etc/rc.d/init.d || echo 'not a directory'
+                # ls -la /etc/lighttpd || echo 'not a directory'
+                systemctl start lighttpd || echo 'not systemctl start lighthttpd'
+                echo $?
+                # /etc/init.d/lighttpd start || echo 'not started'
+                # /etc/init.d/lighttpd status || echo 'offline'
+                curl --verbose -s --head '{}'
+                echo $?
+                curl --verbose -L '{}'
+                echo $?
+                curl -s --head '{}' | head -n 1 | grep 'HTTP/1.[01] [23]..' > /dev/null
+                echo $?
+                ps aux
+                '''.format(page, page, page))
+                print (actual_rc.stdout)
                 # check HTTP status of blockpage
                 actual_rc = Pihole.run(status.format(page))
                 assert exit_status_success == actual_rc.rc
