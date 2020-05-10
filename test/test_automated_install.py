@@ -594,7 +594,7 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
     # TODO: pi.hole can not be resolved because of some error in FTL or resolved
     piholeWebpage = [
         "http://127.0.0.1/admin",
-        # "http://pi.hole/admin"
+        "http://pi.hole/admin"
     ]
     # Whiptail dialog returns Cancel for user prompt
     mock_command('whiptail', {'*': ('', '0')}, Pihole)
@@ -640,9 +640,9 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
             compress='/var/cache/lighttpd/compress'
         )
     )
-    FTLcommand = dedent('''\"
+    FTLcommand = dedent('''\"\"
         /etc/init.d/pihole-FTL restart
-        echo \"''')
+        echo \"\"''')
     mock_command_run(
         'systemctl',
         {
@@ -685,6 +685,11 @@ def test_installPihole_fresh_install_readableBlockpage(Pihole, test_webpage):
     setup_var_file += "INSTALL_WEB_INTERFACE=true\n"
     setup_var_file += "EOF\n"
     Pihole.run(setup_var_file)
+    # TODO: set in dependance of currently build branch
+    b = Pihole.run('mkdir -p /etc/pihole && echo "development" > /etc/pihole/ftlbranch');
+    assert 0 == b.rc
+    b = Pihole.run('cat /etc/pihole/ftlbranch');
+    print(b.stdout)
     installWeb = Pihole.run('''
     export TERM=xterm
     export DEBIAN_FRONTEND=noninteractive
