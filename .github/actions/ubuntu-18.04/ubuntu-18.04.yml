@@ -1,0 +1,5 @@
+name: 'Ubuntu 18.04'
+description: 'Ubuntu 18.04 container'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'

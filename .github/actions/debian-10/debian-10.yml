@@ -1,0 +1,5 @@
+name: 'Debian 10'
+description: 'Debian 10 container'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'

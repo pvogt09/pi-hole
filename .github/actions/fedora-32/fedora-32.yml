@@ -1,0 +1,5 @@
+name: 'Fedora 32'
+description: 'Fedora 32 container'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
