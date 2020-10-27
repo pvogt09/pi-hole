@@ -566,15 +566,21 @@ def test_validate_ip_invalid_letters(Pihole):
 def test_os_check_fails(Pihole):
     ''' Confirms install fails on unsupported OS '''
     Pihole.run('''
+    set -x
+    export TERM=xterm
+    export DEBIAN_FRONTEND=noninteractive
+    runUnattended=true
+    useUpdateVars=true
     source /opt/pihole/basic-install.sh
+    set -x
     distro_check
-    install_dependent_packages ${INSTALLER_DEPS[@]}
+    # install_dependent_packages ${INSTALLER_DEPS[@]}
     cat <<EOT > /etc/os-release
     ID=UnsupportedOS
     VERSION_ID="2"
     EOT
     ''')
-    detectOS = Pihole.run('''t
+    detectOS = Pihole.run('''
     source /opt/pihole/basic-install.sh
     os_check
     ''')
@@ -593,14 +599,18 @@ def test_os_check_passes(Pihole):
     setup_var_file += "EOF\n"
     Pihole.run(setup_var_file)
     install = Pihole.run('''
+    set -x
+    export TERM=xterm
+    export DEBIAN_FRONTEND=noninteractive
     runUnattended=true
     useUpdateVars=true
     source /opt/pihole/basic-install.sh
+    set -x
     runUnattended=true
     useUpdateVars=true
-    update_package_cache || exit 1
+    # update_package_cache || exit 1
     distro_check
-    install_dependent_packages ${INSTALLER_DEPS[@]}
+    # install_dependent_packages ${INSTALLER_DEPS[@]}
     ''')
     detectOS = Pihole.run('''
     source /opt/pihole/basic-install.sh
