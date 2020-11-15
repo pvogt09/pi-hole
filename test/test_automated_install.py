@@ -574,7 +574,7 @@ def test_os_check_fails(Pihole):
     source /opt/pihole/basic-install.sh
     set -x
     distro_check
-    # install_dependent_packages ${INSTALLER_DEPS[@]}
+    install_dependent_packages ${INSTALLER_DEPS[@]}
     cat <<EOT > /etc/os-release
     ID=UnsupportedOS
     VERSION_ID="2"
@@ -608,9 +608,9 @@ def test_os_check_passes(Pihole):
     set -x
     runUnattended=true
     useUpdateVars=true
-    # update_package_cache || exit 1
+    update_package_cache || exit 1
     distro_check
-    # install_dependent_packages ${INSTALLER_DEPS[@]}
+    install_dependent_packages ${INSTALLER_DEPS[@]}
     ''')
     detectOS = Pihole.run('''
     source /opt/pihole/basic-install.sh
