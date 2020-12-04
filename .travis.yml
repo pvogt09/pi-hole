@@ -3,3 +3,6 @@ import:
     if: branch = master
   - source: pi-hole/.github:/build-configs/core.yml@latest
     if: branch != master
+script:
+  # tox.ini handles setup, ordering of docker build first, and then run tests
+  - travis_wait 30 tox
