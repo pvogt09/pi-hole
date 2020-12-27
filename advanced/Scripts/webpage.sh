@@ -10,17 +10,21 @@
 # This file is copyright under the latest version of the EUPL.
 # Please see LICENSE file for your rights under this license.
 
-readonly setupVars="/etc/pihole/setupVars.conf"
 readonly dnsmasqconfig="/etc/dnsmasq.d/01-pihole.conf"
 readonly dhcpconfig="/etc/dnsmasq.d/02-pihole-dhcp.conf"
 readonly FTLconf="/etc/pihole/pihole-FTL.conf"
 # 03 -> wildcards
 readonly dhcpstaticconfig="/etc/dnsmasq.d/04-pihole-static-dhcp.conf"
-readonly PI_HOLE_BIN_DIR="/usr/local/bin"
 readonly dnscustomfile="/etc/pihole/custom.list"
 readonly dnscustomcnamefile="/etc/dnsmasq.d/05-pihole-custom-cname.conf"
 
 readonly gravityDBfile="/etc/pihole/gravity.db"
+
+# Source install script for ${setupVars}, ${PI_HOLE_BIN_DIR} and valid_ip()
+readonly PI_HOLE_FILES_DIR="/etc/.pihole"
+# shellcheck disable=SC2034  # used in basic-install
+PH_TEST="true"
+source "${PI_HOLE_FILES_DIR}/automated install/basic-install.sh"
 
 coltable="/opt/pihole/COL_TABLE"
 if [[ -f ${coltable} ]]; then
@@ -40,7 +44,7 @@ Options:
   -e, email           Set an administrative contact address for the Block Page
   -h, --help          Show this help dialog
   -i, interface       Specify dnsmasq's interface listening behavior
-  -l, privacylevel    Set privacy level (0 = lowest, 4 = highest)"
+  -l, privacylevel    Set privacy level (0 = lowest, 3 = highest)"
     exit 0
 }
 
@@ -163,9 +167,11 @@ ProcessDNSSettings() {
     fi
 
     delete_dnsmasq_setting "domain-needed"
+    delete_dnsmasq_setting "expand-hosts"
 
     if [[ "${DNS_FQDN_REQUIRED}" == true ]]; then
         add_dnsmasq_setting "domain-needed"
+        add_dnsmasq_setting "expand-hosts"
     fi
 
     delete_dnsmasq_setting "bogus-priv"
@@ -210,14 +216,74 @@ trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC68345710423
     fi
 
     if [[ "${CONDITIONAL_FORWARDING}" == true ]]; then
-        add_dnsmasq_setting "server=/${CONDITIONAL_FORWARDING_DOMAIN}/${CONDITIONAL_FORWARDING_IP}"
-        add_dnsmasq_setting "server=/${CONDITIONAL_FORWARDING_REVERSE}/${CONDITIONAL_FORWARDING_IP}"
+        # Convert legacy "conditional forwarding" to rev-server configuration
+        # Remove any existing REV_SERVER settings
+        delete_setting "REV_SERVER"
+        delete_setting "REV_SERVER_DOMAIN"
+        delete_setting "REV_SERVER_TARGET"
+        delete_setting "REV_SERVER_CIDR"
+
+        REV_SERVER=true
+        add_setting "REV_SERVER" "true"
+
+        REV_SERVER_DOMAIN="${CONDITIONAL_FORWARDING_DOMAIN}"
+        add_setting "REV_SERVER_DOMAIN" "${REV_SERVER_DOMAIN}"
+
+        REV_SERVER_TARGET="${CONDITIONAL_FORWARDING_IP}"
+        add_setting "REV_SERVER_TARGET" "${REV_SERVER_TARGET}"
+
+        #Convert CONDITIONAL_FORWARDING_REVERSE if necessary e.g:
+        #          1.1.168.192.in-addr.arpa to 192.168.1.1/32
+        #          1.168.192.in-addr.arpa to 192.168.1.0/24
+        #          168.192.in-addr.arpa to 192.168.0.0/16
+        #          192.in-addr.arpa to 192.0.0.0/8
+        if [[ "${CONDITIONAL_FORWARDING_REVERSE}" == *"in-addr.arpa" ]];then
+            arrRev=("${CONDITIONAL_FORWARDING_REVERSE//./ }")        
+            case ${#arrRev[@]} in 
+                6   )   REV_SERVER_CIDR="${arrRev[3]}.${arrRev[2]}.${arrRev[1]}.${arrRev[0]}/32";;
+                5   )   REV_SERVER_CIDR="${arrRev[2]}.${arrRev[1]}.${arrRev[0]}.0/24";;
+                4   )   REV_SERVER_CIDR="${arrRev[1]}.${arrRev[0]}.0.0/16";;
+                3   )   REV_SERVER_CIDR="${arrRev[0]}.0.0.0/8";; 
+            esac
+        else
+          # Set REV_SERVER_CIDR to whatever value it was set to
+          REV_SERVER_CIDR="${CONDITIONAL_FORWARDING_REVERSE}"
+        fi
+        
+        # If REV_SERVER_CIDR is not converted by the above, then use the REV_SERVER_TARGET variable to derive it
+        if [ -z "${REV_SERVER_CIDR}" ]; then
+            # Convert existing input to /24 subnet (preserves legacy behavior)
+            # This sed converts "192.168.1.2" to "192.168.1.0/24"
+            # shellcheck disable=2001
+            REV_SERVER_CIDR="$(sed "s+\\.[0-9]*$+\\.0/24+" <<< "${REV_SERVER_TARGET}")"
+        fi
+        add_setting "REV_SERVER_CIDR" "${REV_SERVER_CIDR}"
+
+        # Remove obsolete settings from setupVars.conf
+        delete_setting "CONDITIONAL_FORWARDING"
+        delete_setting "CONDITIONAL_FORWARDING_REVERSE"
+        delete_setting "CONDITIONAL_FORWARDING_DOMAIN"
+        delete_setting "CONDITIONAL_FORWARDING_IP"
+    fi
+
+    if [[ "${REV_SERVER}" == true ]]; then
+        add_dnsmasq_setting "rev-server=${REV_SERVER_CIDR},${REV_SERVER_TARGET}"
+        if [ -n "${REV_SERVER_DOMAIN}" ]; then
+            add_dnsmasq_setting "server=/${REV_SERVER_DOMAIN}/${REV_SERVER_TARGET}"
+        fi
     fi
 
     # Prevent Firefox from automatically switching over to DNS-over-HTTPS
     # This follows https://support.mozilla.org/en-US/kb/configuring-networks-disable-dns-over-https
     # (sourced 7th September 2019)
     add_dnsmasq_setting "server=/use-application-dns.net/"
+
+    # We need to process DHCP settings here as well to account for possible
+    # changes in the non-FQDN forwarding. This cannot be done in 01-pihole.conf
+    # as we don't want to delete all local=/.../ lines so it's much safer to
+    # simply rewrite the entire corresponding config file (which is what the
+    # DHCP settings subroutie is doing)
+    ProcessDHCPSettings
 }
 
 SetDNSServers() {
@@ -226,7 +292,16 @@ SetDNSServers() {
     IFS=',' read -r -a array <<< "${args[2]}"
     for index in "${!array[@]}"
     do
-        add_setting "PIHOLE_DNS_$((index+1))" "${array[index]}"
+        # Replace possible "\#" by "#". This fixes AdminLTE#1427
+        local ip
+        ip="${array[index]//\\#/#}"
+
+        if valid_ip "${ip}" || valid_ip6 "${ip}" ; then
+            add_setting "PIHOLE_DNS_$((index+1))" "${ip}"
+        else
+            echo -e "  ${CROSS} Invalid IP has been passed"
+            exit 1
+        fi
     done
 
     if [[ "${args[3]}" == "domain-needed" ]]; then
@@ -247,16 +322,13 @@ SetDNSServers() {
         change_setting "DNSSEC" "false"
     fi
 
-    if [[ "${args[6]}" == "conditional_forwarding" ]]; then
-        change_setting "CONDITIONAL_FORWARDING" "true"
-        change_setting "CONDITIONAL_FORWARDING_IP" "${args[7]}"
-        change_setting "CONDITIONAL_FORWARDING_DOMAIN" "${args[8]}"
-        change_setting "CONDITIONAL_FORWARDING_REVERSE" "${args[9]}"
+    if [[ "${args[6]}" == "rev-server" ]]; then
+        change_setting "REV_SERVER" "true"
+        change_setting "REV_SERVER_CIDR" "${args[7]}"
+        change_setting "REV_SERVER_TARGET" "${args[8]}"
+        change_setting "REV_SERVER_DOMAIN" "${args[9]}"
     else
-        change_setting "CONDITIONAL_FORWARDING" "false"
-        delete_setting "CONDITIONAL_FORWARDING_IP"
-        delete_setting "CONDITIONAL_FORWARDING_DOMAIN"
-        delete_setting "CONDITIONAL_FORWARDING_REVERSE"
+        change_setting "REV_SERVER" "false"
     fi
 
     ProcessDNSSettings
@@ -334,6 +406,14 @@ dhcp-leasefile=/etc/pihole/dhcp.leases
 
     if [[ "${PIHOLE_DOMAIN}" != "none" ]]; then
         echo "domain=${PIHOLE_DOMAIN}" >> "${dhcpconfig}"
+
+        # When there is a Pi-hole domain set and "Never forward non-FQDNs" is
+        # ticked, we add `local=/domain/` to tell FTL that this domain is purely
+        # local and FTL may answer queries from /etc/hosts or DHCP but should
+        # never forward queries on that domain to any upstream servers
+        if  [[ "${DNS_FQDN_REQUIRED}" == true ]]; then
+          echo "local=/${PIHOLE_DOMAIN}/" >> "${dhcpconfig}"
+        fi
     fi
 
     # Sourced from setupVars
@@ -597,8 +677,8 @@ clearAudit()
 }
 
 SetPrivacyLevel() {
-    # Set privacy level. Minimum is 0, maximum is 4
-    if [ "${args[2]}" -ge 0 ] && [ "${args[2]}" -le 4 ]; then
+    # Set privacy level. Minimum is 0, maximum is 3
+    if [ "${args[2]}" -ge 0 ] && [ "${args[2]}" -le 3 ]; then
         changeFTLsetting "PRIVACYLEVEL" "${args[2]}"
         pihole restartdns reload-lists
     fi

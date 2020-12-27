@@ -46,8 +46,9 @@ OBFUSCATED_PLACEHOLDER="<DOMAIN OBFUSCATED>"
 # FAQ URLs for use in showing the debug log
 FAQ_UPDATE_PI_HOLE="${COL_CYAN}https://discourse.pi-hole.net/t/how-do-i-update-pi-hole/249${COL_NC}"
 FAQ_CHECKOUT_COMMAND="${COL_CYAN}https://discourse.pi-hole.net/t/the-pihole-command-with-examples/738#checkout${COL_NC}"
-FAQ_HARDWARE_REQUIREMENTS="${COL_CYAN}https://discourse.pi-hole.net/t/hardware-software-requirements/273${COL_NC}"
-FAQ_HARDWARE_REQUIREMENTS_PORTS="${COL_CYAN}https://discourse.pi-hole.net/t/hardware-software-requirements/273#ports${COL_NC}"
+FAQ_HARDWARE_REQUIREMENTS="${COL_CYAN}https://docs.pi-hole.net/main/prerequisites/${COL_NC}"
+FAQ_HARDWARE_REQUIREMENTS_PORTS="${COL_CYAN}https://docs.pi-hole.net/main/prerequisites/#ports${COL_NC}"
+FAQ_HARDWARE_REQUIREMENTS_FIREWALLD="${COL_CYAN}https://docs.pi-hole.net/main/prerequisites/#firewalld${COL_NC}"
 FAQ_GATEWAY="${COL_CYAN}https://discourse.pi-hole.net/t/why-is-a-default-gateway-important-for-pi-hole/3546${COL_NC}"
 FAQ_ULA="${COL_CYAN}https://discourse.pi-hole.net/t/use-ipv6-ula-addresses-for-pi-hole/2127${COL_NC}"
 FAQ_FTL_COMPATIBILITY="${COL_CYAN}https://github.com/pi-hole/FTL#compatibility-list${COL_NC}"
@@ -123,6 +124,8 @@ get_ftl_conf_value() {
 }
 
 PIHOLE_GRAVITY_DB_FILE="$(get_ftl_conf_value "GRAVITYDB" "${PIHOLE_DIRECTORY}/gravity.db")"
+
+PIHOLE_FTL_DB_FILE="$(get_ftl_conf_value "DBFILE" "${PIHOLE_DIRECTORY}/pihole-FTL.db")"
 
 PIHOLE_COMMAND="${BIN_DIRECTORY}/pihole"
 PIHOLE_COLTABLE_FILE="${BIN_DIRECTORY}/COL_TABLE"
@@ -302,7 +305,7 @@ compare_local_version_to_git_version() {
             remotes=$(git remote -v)
             log_write "${INFO} Remotes: ${remotes//$'\n'/'\n             '}"
 
-            # If the repo is on the master branchs, they are on the stable codebase
+            # If the repo is on the master branch, they are on the stable codebase
             if [[ "${remote_branch}" == "master" ]]; then
                 # so the color of the text is green
                 log_write "${INFO} Branch: ${COL_GREEN}${remote_branch}${COL_NC}"
@@ -315,7 +318,7 @@ compare_local_version_to_git_version() {
             log_write "${INFO} Commit: ${remote_commit}"
             # if `local_status` is non-null, then the repo is not clean, display details here
             if [[ ${local_status} ]]; then
-              #Replace new lines in the status with 12 spaces to make the output cleaner
+              # Replace new lines in the status with 12 spaces to make the output cleaner
               log_write "${INFO} Status: ${local_status//$'\n'/'\n            '}"
               local local_diff
               local_diff=$(git diff)
@@ -331,7 +334,17 @@ compare_local_version_to_git_version() {
             return 1
         fi
     else
-        :
+        # There is no git directory so check if the web interface was disabled
+        local setup_vars_web_interface
+        setup_vars_web_interface=$(< ${PIHOLE_SETUP_VARS_FILE} grep ^INSTALL_WEB_INTERFACE | cut -d '=' -f2)
+        if [[ "${pihole_component}" == "Web" ]] && [[ "${setup_vars_web_interface}" == "false" ]]; then
+            log_write "${INFO} ${pihole_component}: Disabled in setupVars.conf via INSTALL_WEB_INTERFACE=false"
+        else
+            # Return an error message
+            log_write "${COL_RED}Directory ${git_dir} doesn't exist${COL_NC}"
+            # and exit with a non zero code
+            return 1
+        fi
     fi
 }
 
@@ -368,9 +381,9 @@ get_program_version() {
     echo_current_diagnostic "${program_name} version"
     # Evalutate the program we are checking, if it is any of the ones below, show the version
     case "${program_name}" in
-        "lighttpd") program_version="$(${program_name} -v |& head -n1 | cut -d '/' -f2 | cut -d ' ' -f1)"
+        "lighttpd") program_version="$(${program_name} -v 2> /dev/null | head -n1 | cut -d '/' -f2 | cut -d ' ' -f1)"
                     ;;
-        "php") program_version="$(${program_name} -v |& head -n1 | cut -d '-' -f1 | cut -d ' ' -f2)"
+        "php") program_version="$(${program_name} -v 2> /dev/null | head -n1 | cut -d '-' -f1 | cut -d ' ' -f2)"
                 ;;
         # If a match is not found, show an error
         *) echo "Unrecognized program";
@@ -393,53 +406,58 @@ check_critical_program_versions() {
     get_program_version "php"
 }
 
-is_os_supported() {
-    local os_to_check="${1}"
-    # Strip just the base name of the system using sed
-    # shellcheck disable=SC2001
-    the_os=$(echo "${os_to_check}" | sed 's/ .*//')
-    # If the variable is one of our supported OSes,
-    case "${the_os}" in
-        # Print it in green
-        "Raspbian") log_write "${TICK} ${COL_GREEN}${os_to_check}${COL_NC}";;
-        "Ubuntu") log_write "${TICK} ${COL_GREEN}${os_to_check}${COL_NC}";;
-        "Fedora") log_write "${TICK} ${COL_GREEN}${os_to_check}${COL_NC}";;
-        "Debian") log_write "${TICK} ${COL_GREEN}${os_to_check}${COL_NC}";;
-        "CentOS") log_write "${TICK} ${COL_GREEN}${os_to_check}${COL_NC}";;
-        # If not, show it in red and link to our software requirements page
-        *) log_write "${CROSS} ${COL_RED}${os_to_check}${COL_NC} (${FAQ_HARDWARE_REQUIREMENTS})";
-    esac
-}
+os_check() {
+    # This function gets a list of supported OS versions from a TXT record at versions.pi-hole.net
+    # and determines whether or not the script is running on one of those systems
+    local remote_os_domain valid_os valid_version detected_os detected_version cmdResult digReturnCode response
+    remote_os_domain="versions.pi-hole.net"
 
-get_distro_attributes() {
-    # Put the current Internal Field Separator into another variable so it can be restored later
-    OLD_IFS="$IFS"
-    # Store the distro info in an array and make it global since the OS won't change,
-    # but we'll keep it within the function for better unit testing
-    local distro_info
-    #shellcheck disable=SC2016
-    IFS=$'\r\n' command eval 'distro_info=( $(cat /etc/*release) )'
+    detected_os=$(grep "\bID\b" /etc/os-release | cut -d '=' -f2 | tr -d '"')
+    detected_version=$(grep VERSION_ID /etc/os-release | cut -d '=' -f2 | tr -d '"')
 
-    # Set a named variable for better readability
-    local distro_attribute
-    # For each line found in an /etc/*release file,
-    for distro_attribute in "${distro_info[@]}"; do
-        # store the key in a variable
-        local pretty_name_key
-        pretty_name_key=$(echo "${distro_attribute}" | grep "PRETTY_NAME" | cut -d '=' -f1)
-        # we need just the OS PRETTY_NAME,
-        if [[ "${pretty_name_key}" == "PRETTY_NAME" ]]; then
-            # so save in in a variable when we find it
-            PRETTY_NAME_VALUE=$(echo "${distro_attribute}" | grep "PRETTY_NAME" | cut -d '=' -f2- | tr -d '"')
-            # then pass it as an argument that checks if the OS is supported
-            is_os_supported "${PRETTY_NAME_VALUE}"
-        else
-            # Since we only need the pretty name, we can just skip over anything that is not a match
-            :
+    cmdResult="$(dig +short -t txt ${remote_os_domain} @ns1.pi-hole.net 2>&1; echo $?)"
+    #Get the return code of the previous command (last line)
+    digReturnCode="${cmdResult##*$'\n'}"
+
+    # Extract dig response
+    response="${cmdResult%%$'\n'*}"
+
+    IFS=" " read -r -a supportedOS < <(echo "${response}" | tr -d '"')
+    for distro_and_versions in "${supportedOS[@]}"
+    do
+        distro_part="${distro_and_versions%%=*}"
+        versions_part="${distro_and_versions##*=}"
+
+        if [[ "${detected_os^^}" =~ ${distro_part^^} ]]; then
+            valid_os=true
+            IFS="," read -r -a supportedVer <<<"${versions_part}"
+            for version in "${supportedVer[@]}"
+            do
+                if [[ "${detected_version}" =~ $version ]]; then
+                    valid_version=true
+                    break
+                fi
+            done
+            break
         fi
     done
-    # Set the IFS back to what it was
-    IFS="$OLD_IFS"
+
+    log_write "${INFO} dig return code:  ${digReturnCode}"
+    log_write "${INFO} dig response:  ${response}"
+
+    if [ "$valid_os" = true ]; then
+        log_write "${TICK} Distro:  ${COL_GREEN}${detected_os^}${COL_NC}"
+
+        if [ "$valid_version" = true ]; then
+            log_write "${TICK} Version: ${COL_GREEN}${detected_version}${COL_NC}"
+        else
+            log_write "${CROSS} Version: ${COL_RED}${detected_version}${COL_NC}"
+            log_write "${CROSS} Error: ${COL_RED}${detected_os^} is supported but version ${detected_version} is currently unsupported (${FAQ_HARDWARE_REQUIREMENTS})${COL_NC}"
+        fi
+    else
+        log_write "${CROSS} Distro:  ${COL_RED}${detected_os^}${COL_NC}"
+        log_write "${CROSS} Error: ${COL_RED}${detected_os^} is not a supported distro (${FAQ_HARDWARE_REQUIREMENTS})${COL_NC}"
+    fi
 }
 
 diagnose_operating_system() {
@@ -451,7 +469,7 @@ diagnose_operating_system() {
     # If there is a /etc/*release file, it's probably a supported operating system, so we can
     if ls /etc/*release 1> /dev/null 2>&1; then
         # display the attributes to the user from the function made earlier
-        get_distro_attributes
+        os_check
     else
         # If it doesn't exist, it's not a system we currently support and link to FAQ
         log_write "${CROSS} ${COL_RED}${error_msg}${COL_NC} (${FAQ_HARDWARE_REQUIREMENTS})"
@@ -488,6 +506,58 @@ check_selinux() {
     fi
 }
 
+check_firewalld() {
+    # FirewallD ships by default on Fedora/CentOS/RHEL and enabled upon clean install
+    # FirewallD is not configured by the installer and is the responsibility of the user
+    echo_current_diagnostic "FirewallD"
+    # Check if FirewallD service is enabled
+    if command -v systemctl &> /dev/null; then
+        # get its status via systemctl
+        local firewalld_status
+        firewalld_status=$(systemctl is-active firewalld)
+        log_write "${INFO} ${COL_GREEN}Firewalld service ${firewalld_status}${COL_NC}";
+        if [ "${firewalld_status}" == "active" ]; then
+            # test common required service ports
+            local firewalld_enabled_services
+            firewalld_enabled_services=$(firewall-cmd --list-services)
+            local firewalld_expected_services=("http" "dns" "dhcp" "dhcpv6")
+            for i in "${firewalld_expected_services[@]}"; do
+                if [[ "${firewalld_enabled_services}" =~ ${i} ]]; then
+                    log_write "${TICK} ${COL_GREEN}  Allow Service: ${i}${COL_NC}";
+                else
+                    log_write "${CROSS} ${COL_RED}  Allow Service: ${i}${COL_NC} (${FAQ_HARDWARE_REQUIREMENTS_FIREWALLD})"
+                fi
+            done
+            # check for custom FTL FirewallD zone
+            local firewalld_zones
+            firewalld_zones=$(firewall-cmd --get-zones)
+            if [[ "${firewalld_zones}" =~ "ftl" ]]; then
+                log_write "${TICK} ${COL_GREEN}FTL Custom Zone Detected${COL_NC}";
+                # check FTL custom zone interface: lo
+                local firewalld_ftl_zone_interfaces
+                firewalld_ftl_zone_interfaces=$(firewall-cmd --zone=ftl --list-interfaces)
+                if [[ "${firewalld_ftl_zone_interfaces}" =~ "lo" ]]; then
+                    log_write "${TICK} ${COL_GREEN}  Local Interface Detected${COL_NC}";
+                else
+                    log_write "${CROSS} ${COL_RED}  Local Interface Not Detected${COL_NC} (${FAQ_HARDWARE_REQUIREMENTS_FIREWALLD})"
+                fi
+                # check FTL custom zone port: 4711
+                local firewalld_ftl_zone_ports
+                firewalld_ftl_zone_ports=$(firewall-cmd --zone=ftl --list-ports)
+                if [[ "${firewalld_ftl_zone_ports}" =~ "4711/tcp" ]]; then
+                    log_write "${TICK} ${COL_GREEN}  FTL Port 4711/tcp Detected${COL_NC}";
+                else
+                    log_write "${CROSS} ${COL_RED}  FTL Port 4711/tcp Not Detected${COL_NC} (${FAQ_HARDWARE_REQUIREMENTS_FIREWALLD})"
+                fi
+            else
+                log_write "${CROSS} ${COL_RED}FTL Custom Zone Not Detected${COL_NC} (${FAQ_HARDWARE_REQUIREMENTS_FIREWALLD})"
+            fi
+        fi
+    else
+        log_write "${TICK} ${COL_GREEN}Firewalld service not detected${COL_NC}";
+    fi
+}
+
 processor_check() {
     echo_current_diagnostic "Processor"
     # Store the processor type in a variable
@@ -500,7 +570,7 @@ processor_check() {
     else
         # Check if the architecture is currently supported for FTL
         case "${PROCESSOR}" in
-            "amd64") log_write "${TICK} ${COL_GREEN}${PROCESSOR}${COL_NC}"
+            "amd64" | "x86_64") log_write "${TICK} ${COL_GREEN}${PROCESSOR}${COL_NC}"
                 ;;
             "armv6l") log_write "${TICK} ${COL_GREEN}${PROCESSOR}${COL_NC}"
                 ;;
@@ -888,6 +958,18 @@ process_status(){
     done
 }
 
+ftl_full_status(){
+    # if using systemd print the full status of pihole-FTL
+    echo_current_diagnostic "Pi-hole-FTL full status"
+    local FTL_status
+    if command -v systemctl &> /dev/null; then
+      FTL_status=$(systemctl status --full --no-pager pihole-FTL.service)
+      log_write "   ${FTL_status}"
+    else
+      log_write "${INFO} systemctl:  command not found"
+    fi
+}
+
 make_array_from_file() {
     local filename="${1}"
     # The second argument can put a limit on how many line should be read from the file
@@ -905,7 +987,7 @@ make_array_from_file() {
         # Otherwise, read the file line by line
         while IFS= read -r line;do
             # Othwerise, strip out comments and blank lines
-            new_line=$(echo "${line}" | sed -e 's/#.*$//' -e '/^$/d')
+            new_line=$(echo "${line}" | sed -e 's/^\s*#.*$//' -e '/^$/d')
             # If the line still has content (a non-zero value)
             if [[ -n "${new_line}" ]]; then
                 # Put it into the array
@@ -1021,8 +1103,8 @@ list_files_in_dir() {
                     log_write "\\n${COL_GREEN}$(ls -ld "${dir_to_parse}"/"${each_file}")${COL_NC}"
                     # Check if the file we want to view has a limit (because sometimes we just need a little bit of info from the file, not the entire thing)
                     case "${dir_to_parse}/${each_file}" in
-                        # If it's Web server error log, just give the first 25 lines
-                        "${PIHOLE_WEB_SERVER_ERROR_LOG_FILE}") make_array_from_file "${dir_to_parse}/${each_file}" 25
+                        # If it's Web server error log, give the first and last 25 lines
+                        "${PIHOLE_WEB_SERVER_ERROR_LOG_FILE}") head_tail_log "${dir_to_parse}/${each_file}" 25
                             ;;
                         # Same for the FTL log
                         "${PIHOLE_FTL_LOG}") head_tail_log "${dir_to_parse}/${each_file}" 35
@@ -1112,6 +1194,46 @@ show_db_entries() {
     IFS="$OLD_IFS"
 }
 
+show_FTL_db_entries() {
+    local title="${1}"
+    local query="${2}"
+    local widths="${3}"
+
+    echo_current_diagnostic "${title}"
+
+    OLD_IFS="$IFS"
+    IFS=$'\r\n'
+    local entries=()
+    mapfile -t entries < <(\
+        sqlite3 "${PIHOLE_FTL_DB_FILE}" \
+            -cmd ".headers on" \
+            -cmd ".mode column" \
+            -cmd ".width ${widths}" \
+            "${query}"\
+    )
+
+    for line in "${entries[@]}"; do
+        log_write "   ${line}"
+    done
+
+    IFS="$OLD_IFS"
+}
+
+check_dhcp_servers() {
+    echo_current_diagnostic "Discovering active DHCP servers (takes 10 seconds)"
+
+    OLD_IFS="$IFS"
+    IFS=$'\n'
+    local entries=()
+    mapfile -t entries < <(pihole-FTL dhcp-discover)
+
+    for line in "${entries[@]}"; do
+        log_write "   ${line}"
+    done
+
+    IFS="$OLD_IFS"
+}
+
 show_groups() {
     show_db_entries "Groups" "SELECT id,CASE enabled WHEN '0' THEN '   0' WHEN '1' THEN '      1' ELSE enabled END enabled,name,datetime(date_added,'unixepoch','localtime') date_added,datetime(date_modified,'unixepoch','localtime') date_modified,description FROM \"group\"" "4 7 50 19 19 50"
 }
@@ -1126,6 +1248,10 @@ show_domainlist() {
 
 show_clients() {
     show_db_entries "Clients" "SELECT id,GROUP_CONCAT(client_by_group.group_id) group_ids,ip,datetime(date_added,'unixepoch','localtime') date_added,datetime(date_modified,'unixepoch','localtime') date_modified,comment FROM client LEFT JOIN client_by_group ON client.id = client_by_group.client_id GROUP BY id;" "4 12 100 19 19 50"
+}
+
+show_messages() {
+    show_FTL_db_entries "Pi-hole diagnosis messages" "SELECT id,datetime(timestamp,'unixepoch','localtime') timestamp,type,message,blob1,blob2,blob3,blob4,blob5 FROM message;" "4 19 20 60 20 20 20 20 20"
 }
 
 analyze_gravity_list() {
@@ -1215,6 +1341,11 @@ tricorder_use_nc_or_curl() {
         log_write "    * Using ${COL_GREEN}curl${COL_NC} for transmission."
         # transmit he log via TLS and store the token returned in a variable
         tricorder_token=$(curl --silent --upload-file ${PIHOLE_DEBUG_LOG} https://tricorder.pi-hole.net:${TRICORDER_SSL_PORT_NUMBER})
+        if [ -z "${tricorder_token}" ]; then
+         # curl failed, fallback to nc
+         log_write "    * ${COL_GREEN}curl${COL_NC} failed, falling back to ${COL_YELLOW}netcat${COL_NC} for transmission."
+         tricorder_token=$(< ${PIHOLE_DEBUG_LOG} nc tricorder.pi-hole.net ${TRICORDER_NC_PORT_NUMBER})
+        fi
     # Otherwise,
     else
         # use net cat
@@ -1257,7 +1388,7 @@ upload_to_tricorder() {
             # If they say yes, run our function for uploading the log
             [yY][eE][sS]|[yY]) tricorder_use_nc_or_curl;;
             # If they choose no, just exit out of the script
-            *) log_write "    * Log will ${COL_GREEN}NOT${COL_NC} be uploaded to tricorder.";exit;
+            *) log_write "    * Log will ${COL_GREEN}NOT${COL_NC} be uploaded to tricorder.\\n    * A local copy of the debug log can be found at: ${COL_CYAN}${PIHOLE_DEBUG_LOG}${COL_NC}\\n";exit;
         esac
     fi
     # Check if tricorder.pi-hole.net is reachable and provide token
@@ -1295,10 +1426,13 @@ check_component_versions
 check_critical_program_versions
 diagnose_operating_system
 check_selinux
+check_firewalld
 processor_check
 check_networking
 check_name_resolution
+check_dhcp_servers
 process_status
+ftl_full_status
 parse_setup_vars
 check_x_headers
 analyze_gravity_list
@@ -1307,6 +1441,7 @@ show_domainlist
 show_clients
 show_adlists
 show_content_of_pihole_files
+show_messages
 parse_locale
 analyze_pihole_log
 copy_to_debug_log

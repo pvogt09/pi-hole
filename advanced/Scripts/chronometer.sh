@@ -153,7 +153,7 @@ get_init_stats() {
 
         sys_throttle_raw=$(vgt=$(sudo vcgencmd get_throttled); echo "${vgt##*x}")
 
-        # Active Throttle Notice: http://bit.ly/2gnunOo
+        # Active Throttle Notice: https://bit.ly/2gnunOo
         if [[ "$sys_throttle_raw" != "0" ]]; then
             case "$sys_throttle_raw" in
                 *0001) thr_type="${COL_YELLOW}Under Voltage";;
@@ -228,15 +228,21 @@ get_sys_stats() {
         mapfile -t ph_ver_raw < <(pihole -v -c 2> /dev/null | sed -n 's/^.* v/v/p')
         if [[ -n "${ph_ver_raw[0]}" ]]; then
             ph_core_ver="${ph_ver_raw[0]}"
-            ph_lte_ver="${ph_ver_raw[1]}"
-            ph_ftl_ver="${ph_ver_raw[2]}"
+            if [[ ${#ph_ver_raw[@]} -eq 2 ]]; then
+                # AdminLTE not installed
+                ph_lte_ver="(not installed)"
+                ph_ftl_ver="${ph_ver_raw[1]}"
+            else
+                ph_lte_ver="${ph_ver_raw[1]}"
+                ph_ftl_ver="${ph_ver_raw[2]}"
+            fi
         else
             ph_core_ver="-1"
         fi
 
         sys_name=$(hostname)
 
-        [[ -n "$TEMPERATUREUNIT" ]] && temp_unit="$TEMPERATUREUNIT" || temp_unit="c"
+        [[ -n "$TEMPERATUREUNIT" ]] && temp_unit="${TEMPERATUREUNIT^^}" || temp_unit="C"
 
         # Get storage stats for partition mounted on /
         read -r -a disk_raw <<< "$(df -B1 / 2> /dev/null | awk 'END{ print $3,$2,$5 }')"

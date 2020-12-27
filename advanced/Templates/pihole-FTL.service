@@ -12,19 +12,8 @@
 FTLUSER=pihole
 PIDFILE=/run/pihole-FTL.pid
 
-get_pid() {
-    # First, try to obtain PID from PIDFILE
-    if [ -s "${PIDFILE}" ]; then
-        cat "${PIDFILE}"
-        return
-    fi
-
-    # If the PIDFILE is empty or not available, obtain the PID using pidof
-    pidof "pihole-FTL" | awk '{print $(NF)}'
-}
-
 is_running() {
-    ps "$(get_pid)" > /dev/null 2>&1
+    pgrep -o "pihole-FTL" > /dev/null 2>&1
 }
 
 
@@ -50,7 +39,7 @@ start() {
     chmod 0644 /var/log/pihole-FTL.log /run/pihole-FTL.pid /run/pihole-FTL.port /var/log/pihole.log
     # Chown database files to the user FTL runs as. We ignore errors as the files may not (yet) exist
     chown pihole:pihole /etc/pihole/pihole-FTL.db /etc/pihole/gravity.db 2> /dev/null
-    if setcap CAP_NET_BIND_SERVICE,CAP_NET_RAW,CAP_NET_ADMIN+eip "$(which pihole-FTL)"; then
+    if setcap CAP_NET_BIND_SERVICE,CAP_NET_RAW,CAP_NET_ADMIN,CAP_SYS_NICE+eip "$(which pihole-FTL)"; then
       su -s /bin/sh -c "/usr/bin/pihole-FTL" "$FTLUSER"
     else
       echo "Warning: Starting pihole-FTL as root because setting capabilities is not supported on this system"
@@ -63,7 +52,7 @@ start() {
 # Stop the service
 stop() {
   if is_running; then
-    kill "$(get_pid)"
+    pkill -o pihole-FTL
     for i in {1..5}; do
       if ! is_running; then
         break
@@ -76,7 +65,7 @@ stop() {
 
     if is_running; then
       echo "Not stopped; may still be shutting down or shutdown may have failed, killing now"
-      kill -9 "$(get_pid)"
+      pkill -o -9 pihole-FTL
       exit 1
     else
       echo "Stopped"
