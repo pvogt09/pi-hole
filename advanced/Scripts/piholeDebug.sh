@@ -244,7 +244,7 @@ initialize_debug() {
     log_write "${INFO} $(date "+%Y-%m-%d:%H:%M:%S") debug log has been initialized."
 }
 
-# This is a function for visually displaying the curent test that is being run.
+# This is a function for visually displaying the current test that is being run.
 # Accepts one variable: the name of what is being diagnosed
 # Colors do not show in the dasboard, but the icons do: [i], [✓], and [✗]
 echo_current_diagnostic() {
@@ -379,7 +379,7 @@ get_program_version() {
     # Create a local variable so this function can be safely reused
     local program_version
     echo_current_diagnostic "${program_name} version"
-    # Evalutate the program we are checking, if it is any of the ones below, show the version
+    # Evaluate the program we are checking, if it is any of the ones below, show the version
     case "${program_name}" in
         "lighttpd") program_version="$(${program_name} -v 2> /dev/null | head -n1 | cut -d '/' -f2 | cut -d ' ' -f1)"
                     ;;
@@ -410,12 +410,12 @@ os_check() {
     # This function gets a list of supported OS versions from a TXT record at versions.pi-hole.net
     # and determines whether or not the script is running on one of those systems
     local remote_os_domain valid_os valid_version detected_os detected_version cmdResult digReturnCode response
-    remote_os_domain="versions.pi-hole.net"
+    remote_os_domain=${OS_CHECK_DOMAIN_NAME:-"versions.pi-hole.net"}
 
     detected_os=$(grep "\bID\b" /etc/os-release | cut -d '=' -f2 | tr -d '"')
     detected_version=$(grep VERSION_ID /etc/os-release | cut -d '=' -f2 | tr -d '"')
 
-    cmdResult="$(dig +short -t txt ${remote_os_domain} @ns1.pi-hole.net 2>&1; echo $?)"
+    cmdResult="$(dig +short -t txt "${remote_os_domain}" @ns1.pi-hole.net 2>&1; echo $?)"
     #Get the return code of the previous command (last line)
     digReturnCode="${cmdResult##*$'\n'}"
 
@@ -641,7 +641,7 @@ detect_ip_addresses() {
     # First argument should be a 4 or a 6
     local protocol=${1}
     # Use ip to show the addresses for the chosen protocol
-    # Store the values in an arry so they can be looped through
+    # Store the values in an array so they can be looped through
     # Get the lines that are in the file(s) and store them in an array for parsing later
     mapfile -t ip_addr_list < <(ip -"${protocol}" addr show dev "${PIHOLE_INTERFACE}" | awk -F ' ' '{ for(i=1;i<=NF;i++) if ($i ~ '/^inet/') print $(i+1) }')
 
@@ -695,7 +695,7 @@ ping_gateway() {
     # Check if we are using IPv4 or IPv6
     # Find the default gateway using IPv4 or IPv6
     local gateway
-    gateway="$(ip -"${protocol}" route | grep default | cut -d ' ' -f 3)"
+    gateway="$(ip -"${protocol}" route | grep default | grep "${PIHOLE_INTERFACE}" | cut -d ' ' -f 3)"
 
     # If the gateway variable has a value (meaning a gateway was found),
     if [[ -n "${gateway}" ]]; then
@@ -823,7 +823,7 @@ check_x_headers() {
     # Do it for the dashboard as well, as the header is different than above
     local dashboard
     dashboard=$(curl -Is localhost/admin/ | awk '/X-Pi-hole/' | tr -d '\r')
-    # Store what the X-Header shoud be in variables for comparison later
+    # Store what the X-Header should be in variables for comparison later
     local block_page_working
     block_page_working="X-Pi-hole: A black hole for Internet advertisements."
     local dashboard_working
@@ -842,12 +842,12 @@ check_x_headers() {
         log_write "${COL_RED}${full_curl_output_block_page}${COL_NC}"
     fi
 
-    # Same logic applies to the dashbord as above, if the X-Header matches what a working system shoud have,
+    # Same logic applies to the dashboard as above, if the X-Header matches what a working system should have,
     if [[ $dashboard == "$dashboard_working" ]]; then
         # then we can show a success
         log_write "$TICK Web interface X-Header: ${COL_GREEN}${dashboard}${COL_NC}"
     else
-        # Othewise, it's a failure since the X-Headers either don't exist or have been modified in some way
+        # Otherwise, it's a failure since the X-Headers either don't exist or have been modified in some way
         log_write "$CROSS Web interface X-Header: ${COL_RED}X-Header does not match or could not be retrieved.${COL_NC}"
         log_write "${COL_RED}${full_curl_output_dashboard}${COL_NC}"
     fi
@@ -859,13 +859,13 @@ dig_at() {
 
     # Store the arguments as variables with names
     local protocol="${1}"
-    local IP="${2}"
     echo_current_diagnostic "Name resolution (IPv${protocol}) using a random blocked domain and a known ad-serving domain"
     # Set more local variables
     # We need to test name resolution locally, via Pi-hole, and via a public resolver
     local local_dig
-    local pihole_dig
     local remote_dig
+    local interfaces
+    local addresses
     # Use a static domain that we know has IPv4 and IPv6 to avoid false positives
     # Sometimes the randomly chosen domains don't use IPv6, or something else is wrong with them
     local remote_url="doubleclick.com"
@@ -874,15 +874,15 @@ dig_at() {
     if [[ ${protocol} == "6" ]]; then
         # Set the IPv6 variables and record type
         local local_address="::1"
-        local pihole_address="${IP}"
         local remote_address="2001:4860:4860::8888"
+        local sed_selector="inet6"
         local record_type="AAAA"
-    # Othwerwise, it should be 4
+    # Otherwise, it should be 4
     else
         # so use the IPv4 values
         local local_address="127.0.0.1"
-        local pihole_address="${IP}"
         local remote_address="8.8.8.8"
+        local sed_selector="inet"
         local record_type="A"
     fi
 
@@ -892,32 +892,51 @@ dig_at() {
     local random_url
     random_url=$(sqlite3 "${PIHOLE_GRAVITY_DB_FILE}" "SELECT domain FROM vw_gravity ORDER BY RANDOM() LIMIT 1")
 
-    # First, do a dig on localhost to see if Pi-hole can use itself to block a domain
-    if local_dig=$(dig +tries=1 +time=2 -"${protocol}" "${random_url}" @${local_address} +short "${record_type}"); then
-        # If it can, show success
-        log_write "${TICK} ${random_url} ${COL_GREEN}is ${local_dig}${COL_NC} via ${COL_CYAN}localhost$COL_NC (${local_address})"
-    else
-        # Otherwise, show a failure
-        log_write "${CROSS} ${COL_RED}Failed to resolve${COL_NC} ${random_url} via ${COL_RED}localhost${COL_NC} (${local_address})"
-    fi
-
     # Next we need to check if Pi-hole can resolve a domain when the query is sent to it's IP address
     # This better emulates how clients will interact with Pi-hole as opposed to above where Pi-hole is
     # just asing itself locally
-    # The default timeouts and tries are reduced in case the DNS server isn't working, so the user isn't waiting for too long
+    # The default timeouts and tries are reduced in case the DNS server isn't working, so the user isn't
+    # waiting for too long
+    #
+    # Turn off history expansion such that the "!" in the sed command cannot do silly things
+    set +H
+    # Get interfaces
+    # sed logic breakdown:
+    #     / master /d;
+    #          Removes all interfaces that are slaves of others (e.g. virtual docker interfaces)
+    #     /UP/!d;
+    #          Removes all interfaces which are not UP
+    #     s/^[0-9]*: //g;
+    #          Removes interface index
+    #     s/: <.*//g;
+    #          Removes everything after the interface name
+    interfaces="$(ip link show | sed "/ master /d;/UP/!d;s/^[0-9]*: //g;s/: <.*//g;")"
 
-    # If Pi-hole can dig itself from it's IP (not the loopback address)
-    if pihole_dig=$(dig +tries=1 +time=2 -"${protocol}" "${random_url}" @"${pihole_address}" +short "${record_type}"); then
-        # show a success
-        log_write "${TICK} ${random_url} ${COL_GREEN}is ${pihole_dig}${COL_NC} via ${COL_CYAN}Pi-hole${COL_NC} (${pihole_address})"
-    else
-        # Othewise, show a failure
-        log_write "${CROSS} ${COL_RED}Failed to resolve${COL_NC} ${random_url} via ${COL_RED}Pi-hole${COL_NC} (${pihole_address})"
-    fi
+    while IFS= read -r iface ; do
+        # Get addresses of current interface
+        # sed logic breakdown:
+        #     /inet(|6) /!d;
+        #          Removes all lines from ip a that do not contain either "inet " or "inet6 "
+        #     s/^.*inet(|6) //g;
+        #          Removes all leading whitespace as well as the "inet " or "inet6 " string
+        #     s/\/.*$//g;
+        #          Removes CIDR and everything thereafter (e.g., scope properties)
+        addresses="$(ip address show dev "${iface}" | sed "/${sed_selector} /!d;s/^.*${sed_selector} //g;s/\/.*$//g;")"
+        while IFS= read -r local_address ; do
+            # Check if Pi-hole can use itself to block a domain
+            if local_dig=$(dig +tries=1 +time=2 -"${protocol}" "${random_url}" @"${local_address}" +short "${record_type}"); then
+                # If it can, show success
+                log_write "${TICK} ${random_url} ${COL_GREEN}is ${local_dig}${COL_NC} on ${COL_CYAN}${iface}${COL_NC} (${COL_CYAN}${local_address}${COL_NC})"
+            else
+                # Otherwise, show a failure
+                log_write "${CROSS} ${COL_RED}Failed to resolve${COL_NC} ${random_url} on ${COL_RED}${iface}${COL_NC} (${COL_RED}${local_address}${COL_NC})"
+            fi
+        done <<< "${addresses}"
+    done <<< "${interfaces}"
 
     # Finally, we need to make sure legitimate queries can out to the Internet using an external, public DNS server
     # We are using the static remote_url here instead of a random one because we know it works with IPv4 and IPv6
-    if remote_dig=$(dig +tries=1 +time=2 -"${protocol}" "${remote_url}" @${remote_address} +short "${record_type}" | head -n1); then
+    if remote_dig=$(dig +tries=1 +time=2 -"${protocol}" "${remote_url}" @"${remote_address}" +short "${record_type}" | head -n1); then
         # If successful, the real IP of the domain will be returned instead of Pi-hole's IP
         log_write "${TICK} ${remote_url} ${COL_GREEN}is ${remote_dig}${COL_NC} via ${COL_CYAN}a remote, public DNS server${COL_NC} (${remote_address})"
     else
@@ -1032,7 +1051,7 @@ parse_file() {
     local file_lines
     # For each line in the file,
     for file_lines in "${file_info[@]}"; do
-        if [[ ! -z "${file_lines}" ]]; then
+        if [[ -n "${file_lines}" ]]; then
             # don't include the Web password hash
             [[ "${file_lines}" =~ ^\#.*$  || ! "${file_lines}" || "${file_lines}" == "WEBPASSWORD="* ]] && continue
             # otherwise, display the lines of the file
@@ -1044,14 +1063,10 @@ parse_file() {
 }
 
 check_name_resolution() {
-    # Check name resoltion from localhost, Pi-hole's IP, and Google's name severs
+    # Check name resolution from localhost, Pi-hole's IP, and Google's name severs
     # using the function we created earlier
-    dig_at 4 "${IPV4_ADDRESS%/*}"
-    # If IPv6 enabled,
-    if [[ "${IPV6_ADDRESS}" ]]; then
-        # check resolution
-        dig_at 6 "${IPV6_ADDRESS%/*}"
-    fi
+    dig_at 4
+    dig_at 6
 }
 
 # This function can check a directory exists
@@ -1281,56 +1296,74 @@ analyze_gravity_list() {
     IFS="$OLD_IFS"
 }
 
+obfuscated_pihole_log() {
+  local pihole_log=("$@")
+  local line
+  local error_to_check_for
+  local line_to_obfuscate
+  local obfuscated_line
+  for line in "${pihole_log[@]}"; do
+      # A common error in the pihole.log is when there is a non-hosts formatted file
+      # that the DNS server is attempting to read.  Since it's not formatted
+      # correctly, there will be an entry for "bad address at line n"
+      # So we can check for that here and highlight it in red so the user can see it easily
+      error_to_check_for=$(echo "${line}" | grep 'bad address at')
+      # Some users may not want to have the domains they visit sent to us
+      # To that end, we check for lines in the log that would contain a domain name
+      line_to_obfuscate=$(echo "${line}" | grep ': query\|: forwarded\|: reply')
+      # If the variable contains a value, it found an error in the log
+      if [[ -n ${error_to_check_for} ]]; then
+          # So we can print it in red to make it visible to the user
+          log_write "   ${CROSS} ${COL_RED}${line}${COL_NC} (${FAQ_BAD_ADDRESS})"
+      else
+          # If the variable does not a value (the current default behavior), so do not obfuscate anything
+          if [[ -z ${OBFUSCATE} ]]; then
+              log_write "   ${line}"
+          # Othwerise, a flag was passed to this command to obfuscate domains in the log
+          else
+              # So first check if there are domains in the log that should be obfuscated
+              if [[ -n ${line_to_obfuscate} ]]; then
+                  # If there are, we need to use awk to replace only the domain name (the 6th field in the log)
+                  # so we substitute the domain for the placeholder value
+                  obfuscated_line=$(echo "${line_to_obfuscate}" | awk -v placeholder="${OBFUSCATED_PLACEHOLDER}" '{sub($6,placeholder); print $0}')
+                  log_write "   ${obfuscated_line}"
+              else
+                  log_write "   ${line}"
+              fi
+          fi
+      fi
+  done
+}
+
 analyze_pihole_log() {
-    echo_current_diagnostic "Pi-hole log"
-    local head_line
-    # Put the current Internal Field Separator into another variable so it can be restored later
-    OLD_IFS="$IFS"
-    # Get the lines that are in the file(s) and store them in an array for parsing later
-    IFS=$'\r\n'
-    local pihole_log_permissions
-    pihole_log_permissions=$(ls -ld "${PIHOLE_LOG}")
-    log_write "${COL_GREEN}${pihole_log_permissions}${COL_NC}"
-    local pihole_log_head=()
-    mapfile -t pihole_log_head < <(head -n 20 ${PIHOLE_LOG})
-    log_write "   ${COL_CYAN}-----head of $(basename ${PIHOLE_LOG})------${COL_NC}"
-    local error_to_check_for
-    local line_to_obfuscate
-    local obfuscated_line
-    for head_line in "${pihole_log_head[@]}"; do
-        # A common error in the pihole.log is when there is a non-hosts formatted file
-        # that the DNS server is attempting to read.  Since it's not formatted
-        # correctly, there will be an entry for "bad address at line n"
-        # So we can check for that here and highlight it in red so the user can see it easily
-        error_to_check_for=$(echo "${head_line}" | grep 'bad address at')
-        # Some users may not want to have the domains they visit sent to us
-        # To that end, we check for lines in the log that would contain a domain name
-        line_to_obfuscate=$(echo "${head_line}" | grep ': query\|: forwarded\|: reply')
-        # If the variable contains a value, it found an error in the log
-        if [[ -n ${error_to_check_for} ]]; then
-            # So we can print it in red to make it visible to the user
-            log_write "   ${CROSS} ${COL_RED}${head_line}${COL_NC} (${FAQ_BAD_ADDRESS})"
-        else
-            # If the variable does not a value (the current default behavior), so do not obfuscate anything
-            if [[ -z ${OBFUSCATE} ]]; then
-                log_write "   ${head_line}"
-            # Othwerise, a flag was passed to this command to obfuscate domains in the log
-            else
-                # So first check if there are domains in the log that should be obfuscated
-                if [[ -n ${line_to_obfuscate} ]]; then
-                    # If there are, we need to use awk to replace only the domain name (the 6th field in the log)
-                    # so we substitute the domain for the placeholder value
-                    obfuscated_line=$(echo "${line_to_obfuscate}" | awk -v placeholder="${OBFUSCATED_PLACEHOLDER}" '{sub($6,placeholder); print $0}')
-                    log_write "   ${obfuscated_line}"
-                else
-                    log_write "   ${head_line}"
-                fi
-            fi
-        fi
-    done
-    log_write ""
-    # Set the IFS back to what it was
-    IFS="$OLD_IFS"
+  echo_current_diagnostic "Pi-hole log"
+  local pihole_log_head=()
+  local pihole_log_tail=()
+  local pihole_log_permissions
+  local logging_enabled
+
+  logging_enabled=$(grep -c "^log-queries" /etc/dnsmasq.d/01-pihole.conf)
+  if [[ "${logging_enabled}" == "0" ]]; then
+      # Inform user that logging has been disabled and pihole.log does not contain queries
+      log_write "${INFO} Query logging is disabled"
+      log_write ""
+  fi
+  # Put the current Internal Field Separator into another variable so it can be restored later
+  OLD_IFS="$IFS"
+  # Get the lines that are in the file(s) and store them in an array for parsing later
+  IFS=$'\r\n'
+  pihole_log_permissions=$(ls -ld "${PIHOLE_LOG}")
+  log_write "${COL_GREEN}${pihole_log_permissions}${COL_NC}"
+  mapfile -t pihole_log_head < <(head -n 20 ${PIHOLE_LOG})
+  log_write "   ${COL_CYAN}-----head of $(basename ${PIHOLE_LOG})------${COL_NC}"
+  obfuscated_pihole_log "${pihole_log_head[@]}"
+  log_write ""
+  mapfile -t pihole_log_tail < <(tail -n 20 ${PIHOLE_LOG})
+  log_write "   ${COL_CYAN}-----tail of $(basename ${PIHOLE_LOG})------${COL_NC}"
+  obfuscated_pihole_log "${pihole_log_tail[@]}"
+  log_write ""
+  # Set the IFS back to what it was
+  IFS="$OLD_IFS"
 }
 
 tricorder_use_nc_or_curl() {
