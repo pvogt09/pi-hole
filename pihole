@@ -16,6 +16,7 @@ readonly PI_HOLE_SCRIPT_DIR="/opt/pihole"
 # error due to modifying a readonly variable.
 setupVars="/etc/pihole/setupVars.conf"
 PI_HOLE_BIN_DIR="/usr/local/bin"
+readonly FTL_PID_FILE="/run/pihole-FTL.pid"
 
 readonly colfile="${PI_HOLE_SCRIPT_DIR}/COL_TABLE"
 source "${colfile}"
@@ -98,8 +99,25 @@ versionFunc() {
   exit 0
 }
 
+# Get PID of main pihole-FTL process
+getFTLPID() {
+  local pid
+
+  if [ -s "${FTL_PID_FILE}" ]; then
+    # -s: FILE exists and has a size greater than zero
+    pid="$(<"$FTL_PID_FILE")"
+    # Exploit prevention: unset the variable if there is malicious content
+    # Verify that the value read from the file is numeric
+    [[ "$pid" =~ [^[:digit:]] ]] && unset pid
+  fi
+
+  # If FTL is not running, or the PID file contains malicious stuff, substitute
+  # negative PID to signal this to the caller
+  echo "${pid:=-1}"
+}
+
 restartDNS() {
-  local svcOption svc str output status
+  local svcOption svc str output status pid icon
   svcOption="${1:-restart}"
 
   # Determine if we should reload or restart
@@ -108,17 +126,34 @@ restartDNS() {
     # Note 1: This will NOT re-read any *.conf files
     # Note 2: We cannot use killall here as it does
     #         not know about real-time signals
-    svc="pkill -RTMIN pihole-FTL"
-    str="Reloading DNS lists"
+    pid="$(getFTLPID)"
+    if [[ "$pid" -eq "-1" ]]; then
+      svc="true"
+      str="FTL is not running"
+      icon="${INFO}"
+    else
+      svc="kill -RTMIN ${pid}"
+      str="Reloading DNS lists"
+      icon="${TICK}"
+    fi
   elif [[ "${svcOption}" =~ "reload" ]]; then
     # Reloading of the DNS cache has been requested
     # Note: This will NOT re-read any *.conf files
-    svc="pkill -HUP pihole-FTL"
-    str="Flushing DNS cache"
+    pid="$(getFTLPID)"
+    if [[ "$pid" -eq "-1" ]]; then
+      svc="true"
+      str="FTL is not running"
+      icon="${INFO}"
+    else
+      svc="kill -HUP ${pid}"
+      str="Flushing DNS cache"
+      icon="${TICK}"
+    fi
   else
     # A full restart has been requested
     svc="service pihole-FTL restart"
     str="Restarting DNS server"
+    icon="${TICK}"
   fi
 
   # Print output to Terminal, but not to Web Admin
@@ -128,7 +163,7 @@ restartDNS() {
   status="$?"
 
   if [[ "${status}" -eq 0 ]]; then
-    [[ -t 1 ]] && echo -e "${OVER}  ${TICK} ${str}"
+    [[ -t 1 ]] && echo -e "${OVER}  ${icon} ${str}"
     return 0
   else
     [[ ! -t 1 ]] && local OVER=""
@@ -328,16 +363,13 @@ tailFunc() {
   fi
   echo -e "  ${INFO} Press Ctrl-C to exit"
 
-  # Retrieve IPv4/6 addresses
-  source /etc/pihole/setupVars.conf
-
   # Strip date from each line
   # Color blocklist/blacklist/wildcard entries as red
   # Color A/AAAA/DHCP strings as white
   # Color everything else as gray
-  tail -f /var/log/pihole.log | sed -E \
+  tail -f /var/log/pihole.log | grep --line-buffered "${1}" | sed -E \
     -e "s,($(date +'%b %d ')| dnsmasq\[[0-9]*\]),,g" \
-    -e "s,(.*(blacklisted |gravity blocked ).* is (0.0.0.0|::|NXDOMAIN|${IPV4_ADDRESS%/*}|${IPV6_ADDRESS:-NULL}).*),${COL_RED}&${COL_NC}," \
+    -e "s,(.*(blacklisted |gravity blocked ).*),${COL_RED}&${COL_NC}," \
     -e "s,.*(query\\[A|DHCP).*,${COL_NC}&${COL_NC}," \
     -e "s,.*,${COL_GRAY}&${COL_NC},"
   exit 0
@@ -421,7 +453,10 @@ Debugging Options:
                         Add '-a' to automatically upload the log to tricorder.pi-hole.net
   -f, flush           Flush the Pi-hole log
   -r, reconfigure     Reconfigure or Repair Pi-hole subsystems
-  -t, tail            View the live output of the Pi-hole log
+  -t, tail [arg]      View the live output of the Pi-hole log.
+                      Add an optional argument to filter the log
+                      (regular expressions are supported)
+
 
 Options:
   -a, admin           Web interface options
@@ -495,7 +530,7 @@ case "${1}" in
   "status"                      ) statusFunc "$2";;
   "restartdns"                  ) restartDNS "$2";;
   "-a" | "admin"                ) webpageFunc "$@";;
-  "-t" | "tail"                 ) tailFunc;;
+  "-t" | "tail"                 ) tailFunc "$2";;
   "checkout"                    ) piholeCheckoutFunc "$@";;
   "tricorder"                   ) tricorderFunc;;
   "updatechecker"               ) updateCheckFunc "$@";;

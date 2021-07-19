@@ -47,8 +47,6 @@ def test_setupVars_are_sourced_to_global_scope(Pihole):
         # Currently debug test function only
         echo "Outputting sourced variables"
         echo "PIHOLE_INTERFACE=${PIHOLE_INTERFACE}"
-        echo "IPV4_ADDRESS=${IPV4_ADDRESS}"
-        echo "IPV6_ADDRESS=${IPV6_ADDRESS}"
         echo "PIHOLE_DNS_1=${PIHOLE_DNS_1}"
         echo "PIHOLE_DNS_2=${PIHOLE_DNS_2}"
     }
@@ -1033,43 +1031,45 @@ def test_IPv6_ULA_GUA_test(Pihole):
     assert expected_stdout in detectPlatform.stdout
 
 
-def test_validate_ip_valid(Pihole):
+def test_validate_ip(Pihole):
     '''
-    Given a valid IP address, valid_ip returns success
-    '''
-
-    output = Pihole.run('''
-    source /opt/pihole/basic-install.sh
-    valid_ip "192.168.1.1"
-    ''')
-
-    assert output.rc == 0
-
-
-def test_validate_ip_invalid_octet(Pihole):
-    '''
-    Given an invalid IP address (large octet), valid_ip returns an error
+    Tests valid_ip for various IP addresses
     '''
 
-    output = Pihole.run('''
-    source /opt/pihole/basic-install.sh
-    valid_ip "1092.168.1.1"
-    ''')
+    def test_address(addr, success=True):
+        output = Pihole.run('''
+        source /opt/pihole/basic-install.sh
+        valid_ip "{addr}"
+        '''.format(addr=addr))
 
-    assert output.rc == 1
+        assert output.rc == 0 if success else 1
 
-
-def test_validate_ip_invalid_letters(Pihole):
-    '''
-    Given an invalid IP address (contains letters), valid_ip returns an error
-    '''
-
-    output = Pihole.run('''
-    source /opt/pihole/basic-install.sh
-    valid_ip "not an IP"
-    ''')
-
-    assert output.rc == 1
+    test_address('192.168.1.1')
+    test_address('127.0.0.1')
+    test_address('255.255.255.255')
+    test_address('255.255.255.256', False)
+    test_address('255.255.256.255', False)
+    test_address('255.256.255.255', False)
+    test_address('256.255.255.255', False)
+    test_address('1092.168.1.1', False)
+    test_address('not an IP', False)
+    test_address('8.8.8.8#', False)
+    test_address('8.8.8.8#0')
+    test_address('8.8.8.8#1')
+    test_address('8.8.8.8#42')
+    test_address('8.8.8.8#888')
+    test_address('8.8.8.8#1337')
+    test_address('8.8.8.8#65535')
+    test_address('8.8.8.8#65536', False)
+    test_address('8.8.8.8#-1', False)
+    test_address('00.0.0.0', False)
+    test_address('010.0.0.0', False)
+    test_address('001.0.0.0', False)
+    test_address('0.0.0.0#00', False)
+    test_address('0.0.0.0#01', False)
+    test_address('0.0.0.0#001', False)
+    test_address('0.0.0.0#0001', False)
+    test_address('0.0.0.0#00001', False)
 
 
 def test_os_check_fails(Pihole):
@@ -1104,3 +1104,42 @@ def test_os_check_passes(Pihole):
     ''')
     expected_stdout = 'Supported OS detected'
     assert expected_stdout in detectOS.stdout
+
+
+def test_package_manager_has_installer_deps(Pihole):
+    ''' Confirms OS is able to install the required packages for the installer'''
+    mock_command('whiptail', {'*': ('', '0')}, Pihole)
+    output = Pihole.run('''
+    source /opt/pihole/basic-install.sh
+    distro_check
+    install_dependent_packages ${INSTALLER_DEPS[@]}
+    ''')
+
+    assert 'No package' not in output.stdout  # centos7 still exits 0...
+    assert output.rc == 0
+
+
+def test_package_manager_has_pihole_deps(Pihole):
+    ''' Confirms OS is able to install the required packages for Pi-hole '''
+    mock_command('whiptail', {'*': ('', '0')}, Pihole)
+    output = Pihole.run('''
+    source /opt/pihole/basic-install.sh
+    distro_check
+    install_dependent_packages ${PIHOLE_DEPS[@]}
+    ''')
+
+    assert 'No package' not in output.stdout  # centos7 still exits 0...
+    assert output.rc == 0
+
+
+def test_package_manager_has_web_deps(Pihole):
+    ''' Confirms OS is able to install the required packages for web '''
+    mock_command('whiptail', {'*': ('', '0')}, Pihole)
+    output = Pihole.run('''
+    source /opt/pihole/basic-install.sh
+    distro_check
+    install_dependent_packages ${PIHOLE_WEB_DEPS[@]}
+    ''')
+
+    assert 'No package' not in output.stdout  # centos7 still exits 0...
+    assert output.rc == 0

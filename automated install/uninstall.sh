@@ -31,7 +31,7 @@ else
     else
         echo -e "  ${CROSS} ${str}
             Script called with non-root privileges
-            The Pi-hole requires elevated privleges to uninstall"
+            The Pi-hole requires elevated privileges to uninstall"
         exit 1
     fi
 fi
@@ -206,11 +206,7 @@ removeNoPurge() {
 }
 
 ######### SCRIPT ###########
-if command -v vcgencmd &> /dev/null; then
-    echo -e "  ${INFO} All dependencies are safe to remove on Raspbian"
-else
-    echo -e "  ${INFO} Be sure to confirm if any dependencies should not be removed"
-fi
+echo -e "  ${INFO} Be sure to confirm if any dependencies should not be removed"
 while true; do
     echo -e "  ${INFO} ${COL_YELLOW}The following dependencies may have been added by the Pi-hole install:"
     echo -n "    "
